@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# Timestamp (sortable AND readable)
+stamp=`date +"%s_-_%A_%d_%B_%Y_at_%H_%M"`
+
+echo "Dumping..."
+
+filename="$stamp.tar.gz"
+tmpfile="/home/ubuntu/$filename"
+object="s3://ti-db-backups/$filename"
+
+set -e # error out if any of the commands exit with a non-success status code
+
+sudo /usr/local/bin/rethinkdb-dump -a "{{authkey}}" -e ti -f "$tmpfile"
+
+echo "Uploading..."
+
+sudo /usr/local/bin/s3cmd put "$tmpfile" "$object"
+
+# Delete the tmpfile
+rm -f "$tmpfile"
+
+echo "$filename"
