@@ -1,0 +1,85 @@
+---
+# First, We add the RethinkDB APT Repo and update APT
+- name: Install RethinkDB APT Repo
+  apt_repository: repo="deb http://download.rethinkdb.com/apt trusty main" state=present
+- name: Update APT
+  apt: update_cache=yes upgrade=safe cache_valid_time=3600
+
+# Then, we install a bunch of packages from apt
+- name: Install pip Package
+  apt: pkg=python-pip state=installed
+- name: Install RethinkDB Package
+  apt: pkg=rethinkdb state=installed force=yes # we have to force because RethinkDB is an "unauthenticated package"
+- name: Install Nginx Package
+  apt: pkg=nginx state=installed
+
+# ... and a few in pip
+- name: Install rethinkdb for RethinkDB dump and restore
+  pip: name=rethinkdb
+- name: Install passlib to generate htpasswd # required for ansible htpasswd module
+  pip: name=passlib
+- name: Install s3cmd for db backups
+  pip: name=s3cmd
+
+# then reboot the system if necessary (most likely necessary)
+- name: reboot the system
+  command: shutdown -r now 'Rebooting to complete system upgrade' removes=/var/run/reboot-required
+  register: rebootrequired
+- name: wait for the server to go down (reboot)
+  sudo: no
+  local_action: wait_for host={{inventory_hostname}} port=22 state=stopped
+  when: rebootrequired.changed
+- name: wait for the server to come up
+  sudo: no
+  local_action: wait_for host={{inventory_hostname}} port=22 delay=10 state=started
+  when: rebootrequired.changed
+
+# Configure RethinkDB
+- name: Configure RethinkDB Instance
+  template: src="{{inventory_dir}}/templates/rethinkdb-instance.conf.j2" dest=/etc/rethinkdb/instances.d/default.conf mode=0644
+- name: Create RethinkDB Data Directory
+  file: name=/var/lib/rethinkdb/default state=directory group=rethinkdb owner=rethinkdb
+- name: Create RethinkDB Log Directory
+  file: name=/var/log/rethinkdb state=directory group=rethinkdb owner=rethinkdb
+- name: Create RethinkDB Run Directory
+  file: name=/var/run/rethinkdb state=directory group=rethinkdb owner=rethinkdb
+- name: Create RethinkDB Default Instance
+  command: rethinkdb create --runuser rethinkdb --rungroup rethinkdb -d /var/lib/rethinkdb/default/data
+- name: Remove RethinkDB init.d script
+  file: name=/etc/init.d/rethinkdb state=absent
+- name: Add upstart script s3cmd
+  template: src="{{inventory_dir}}/templates/upstart-rethinkdb.conf.j2" dest=/etc/init/rethinkdb.conf mode=0644
+
+# Then we configure nginx to secure the RethinkDB web interface with http basic auth proxying
+- name: Configure Nginx
+  template: src="{{inventory_dir}}/templates/nginx.conf.j2" dest=/etc/nginx/nginx.conf mode=0644
+- name: Configure Nginx Vhost
+  template: src="{{inventory_dir}}/templates/nginx-vhost.j2" dest=/etc/nginx/sites-enabled/default mode=0777
+- name: Generate self-signed certificate
+  command: openssl req -new -nodes -x509 -subj "/C=US/ST=Washington/L=Seattle/O=IT/CN={{ansible_fqdn}}" -days 3650 -keyout /etc/nginx/ssl.key -out /etc/nginx/ssl.crt -extensions v3_ca creates=/etc/nginx/ssl.crt
+- name: Generate htpasswd
+  htpasswd: path=/etc/nginx/htpasswd name=rethinkdb password={{authkey}} owner=ubuntu group=ubuntu mode=0644
+
+# Next, configure s3cmd for db backups
+- name: Configure s3cmd
+  template: src="{{inventory_dir}}/templates/s3cmd.conf.j2" dest=/home/ubuntu/.s3cfg mode=0644
+
+# Finally, restart the services
+- name: Restart nginx
+  service: name=nginx state=restarted
+- name: Restart RethinkDB
+  service: name=rethinkdb state=restarted
+
+# We have to add the auth key after we've restarted RethinkDB
+- name: Secure RethinkDB
+  command: rethinkdb admin --join localhost:29015 set auth "{{authkey}}"
+
+# Add Rethinkdb Backup Script
+- name: Add Backup script
+  template: src="{{inventory_dir}}/templates/backup-rethinkdb.sh.j2" dest=/home/ubuntu/backup-rethinkdb.sh mode=0755
+- name: Add Backup script to cron
+  cron: name="backup rethinkdb" special_time="hourly" user=ubuntu job="/home/ubuntu/backup-rethinkdb.sh"
+
+# We're all set now
+- name: Output Authkey
+  debug: var=authkey
