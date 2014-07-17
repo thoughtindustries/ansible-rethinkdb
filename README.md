@@ -1,7 +1,7 @@
 Ansible templates & tasks for RethinkDB
 =======================================
 
-This repository contains some ansible tasks & templates designed to help get you started building a 
+This repository contains some ansible tasks & templates designed to help get you started building a production-ready rethinkdb server.
 
 Functionality includes:
 
@@ -48,6 +48,6 @@ You can either set the authkey var yourself such as:
   - include: install-rethinkdb.yml
 ```
 
-This is designed to run on Ubuntu 14.04 LTS but most likely works on other distros/versions as well.
+This is designed to run on Ubuntu 14.04 LTS within the AWS cloud but most likely works on other distros/versions/clouds as well. If nothing else it's a good starting point for your own tasks/plays.
 
 Pull requests welcome!!
